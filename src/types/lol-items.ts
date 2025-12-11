@@ -44,3 +44,9 @@ export interface ItemApiResponse {
   version: string;
   data: ItemData;
 }
+
+export interface MapItem {
+  mapId: number;
+  mapName: string;
+  notes: string;
+}
