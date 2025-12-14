@@ -15,7 +15,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card } from './ui/card';
+import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from './ui/skeleton';
 
@@ -48,6 +51,25 @@ function parseAttributes(html: string): ItemAttribute[] {
 }
 
 export function ItemGrid() {
+  const [clientError, setClientError] = React.useState<Error | null>(null);
+
+  React.useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      console.error('Captured window error', e);
+      setClientError(e.error || new Error(e.message || 'Unknown error'));
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      console.error('Captured unhandled rejection', e);
+      const reason = (e.reason instanceof Error) ? e.reason : new Error(String(e.reason));
+      setClientError(reason);
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
   const [items, setItems] = React.useState<Item[]>([]);
   const [maps, setMaps] = React.useState<MapItem[]>([]);
   const [uniqueAttributes, setUniqueAttributes] = React.useState<string[]>([]);
@@ -55,11 +77,46 @@ export function ItemGrid() {
 
   const [filter, setFilter] = React.useState('');
   const [selectedAttribute, setSelectedAttribute] = React.useState('');
-  const [selectedMap, setSelectedMap] = React.useState('11');
+  const [selectedMaps, setSelectedMaps] = React.useState<string[]>([]);
   const [sortConfig, setSortConfig] = React.useState<{ key: SortKey; direction: SortDirection } | null>({
     key: 'name',
     direction: 'ascending',
   });
+
+  // Normaliza texto removendo acentos e caracteres não alfanuméricos
+  const normalizeText = (s?: string) => {
+    const str = (s ?? '').toString();
+    const decomposed = typeof str.normalize === 'function' ? str.normalize('NFD') : str;
+    return decomposed
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^0-9a-zA-Z\s]/g, '')
+      .toLowerCase()
+      .trim();
+  };
+
+  // Lista de itens do tipo 'cabeça' (nomes em inglês e PT-BR)
+  const headItemNames = React.useMemo(() => {
+    const names = [
+      "Abyssal Mask", "Máscara Abissal",
+      "Bloodletter's Curse", "Maldição Sanguessuga",
+      "Cosmic Drive", "Ímpeto Cósmico",
+      "Edge of Night", "Limiar da Noite",
+      "Experimental Hexplate", "Hexoplaca Experimental",
+      "Fimbulwinter",
+      "Haunting Guise", "Máscara Assustadora",
+      "Hollow Radiance", "Resplendor Vazio",
+      "Hubris", "Húbris",
+      "Jak'Sho, The Protean", "Jak'Sho, o Inconstante",
+      "Knight's Vow", "Juramento do Cavaleiro",
+      "Liandry's Torment", "Tormento de Liandry",
+      "Rabadon's Deathcap", "Capuz da Morte de Rabadon",
+      "Riftmaker", "Criafendas",
+      "Shurelya's Battlesong", "Hino Bélico de Shurelya",
+      "Spectre's Cowl", "Capuz do Espectro",
+      "Wooglet's Witchcap", "Chapéu Mágico de Wooglet",
+    ];
+    return new Set(names.map((n) => normalizeText(n)));
+  }, []);
 
   React.useEffect(() => {
     async function fetchData() {
@@ -84,13 +141,19 @@ export function ItemGrid() {
           .map(([id, itemData]) => {
             const attributes = parseAttributes(itemData.description);
             attributes.forEach(attr => allAttributes.add(attr.descricao));
+            const isHead = headItemNames.has(normalizeText(itemData.name)) || headItemNames.has(normalizeText(itemData.plaintext));
             return {
               ...itemData,
               id,
               attributes,
+              annotations: isHead ? 'Cabeça/Chapéu/Máscara' : '',
             };
           })
-          .filter(item => item.gold.total > 0 && item.maps[selectedMap] === true);
+          .filter(item => {
+            if (item.gold.total <= 0) return false;
+            if (!selectedMaps || selectedMaps.length === 0) return true;
+            return selectedMaps.some(sm => item.maps[sm] === true);
+          });
 
         setItems(itemsArray);
         setUniqueAttributes(Array.from(allAttributes).sort());
@@ -106,19 +169,24 @@ export function ItemGrid() {
     }
 
     fetchData();
-  }, [selectedMap]);
+  }, [selectedMaps]);
 
   const filteredAndSortedItems = React.useMemo(() => {
     let sortableItems = [...items];
 
     if (filter) {
-      const lowercasedFilter = filter.toLowerCase();
-      sortableItems = sortableItems.filter(
-        (item) =>
-          item.name.toLowerCase().includes(lowercasedFilter) ||
-          item.plaintext.toLowerCase().includes(lowercasedFilter) ||
-          item.description.toLowerCase().includes(lowercasedFilter)
-      );
+      const normalizedFilter = normalizeText(filter);
+      sortableItems = sortableItems.filter((item) => {
+        const name = normalizeText(item.name);
+        const plaintext = normalizeText(item.plaintext);
+        const descBase = item.description?.replace(/<[^>]*>/g, '') || '';
+        const descText = normalizeText(`${descBase} ${item.annotations || ''}`);
+        return (
+          name.includes(normalizedFilter) ||
+          plaintext.includes(normalizedFilter) ||
+          descText.includes(normalizedFilter)
+        );
+      });
     }
 
     if (sortConfig !== null) {
@@ -174,6 +242,75 @@ export function ItemGrid() {
     }
   };
 
+
+  // Toggle a map selection
+  const toggleMapSelection = (mapId: string, checked?: boolean | "mixed") => {
+    setSelectedMaps((prev) => {
+      const exists = prev.includes(mapId);
+      const shouldCheck = checked === undefined ? !exists : !!checked;
+      if (shouldCheck && !exists) return [...prev, mapId];
+      if (!shouldCheck && exists) return prev.filter((m) => m !== mapId);
+      return prev;
+    });
+  };
+
+  // Group maps by name (distinct names) -> mapIds[]
+  const groupedMapsByName = React.useMemo(() => {
+    const map = new Map<string, number[]>();
+    maps.forEach((m) => {
+      const arr = map.get(m.mapName) || [];
+      arr.push(m.mapId);
+      map.set(m.mapName, arr);
+    });
+    return map;
+  }, [maps]);
+
+  const distinctMapNames = React.useMemo(() => Array.from(groupedMapsByName.keys()).sort(), [groupedMapsByName]);
+
+  // Toggle selection by map name (affects all associated mapIds)
+  const toggleMapNameSelection = (mapName: string, checked?: boolean | "mixed") => {
+    const ids = (groupedMapsByName.get(mapName) || []).map(String);
+    setSelectedMaps((prev) => {
+      const allSelected = ids.every((id) => prev.includes(id));
+      const shouldCheck = checked === undefined ? !allSelected : !!checked;
+      if (shouldCheck) {
+        // add ids (avoid duplicates)
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return Array.from(next);
+      } else {
+        // remove ids
+        return prev.filter((p) => !ids.includes(p));
+      }
+    });
+  };
+
+  // Retorna nomes distintos de mapas onde o item está disponível
+  const getItemMapNames = (item: Item) => {
+    if (!item.maps) return [] as string[];
+    const ids = Object.entries(item.maps)
+      .filter(([id, val]) => !!val)
+      .map(([id]) => id);
+    const names = ids
+      .map((id) => maps.find((m) => String(m.mapId) === id)?.mapName)
+      .filter(Boolean) as string[];
+    return Array.from(new Set(names));
+  };
+
+  const selectedDistinctNames = React.useMemo(() => {
+    return distinctMapNames.filter((name) => {
+      const ids = groupedMapsByName.get(name) || [];
+      return ids.some((id) => selectedMaps.includes(String(id)));
+    });
+  }, [distinctMapNames, groupedMapsByName, selectedMaps]);
+
+  const allMapsSelected = maps.length > 0 && selectedMaps.length === maps.length;
+  const toggleAllMaps = (checked?: boolean | "mixed") => {
+    const shouldCheck = checked === undefined ? !allMapsSelected : !!checked;
+    if (shouldCheck) setSelectedMaps(maps.map(m => m.mapId.toString()));
+    else setSelectedMaps([]);
+  }
+
   const renderSortArrow = (key: SortKey) => {
     if (!sortConfig || sortConfig.key !== key) {
       return <ChevronsUpDown className="ml-2 h-4 w-4 text-muted-foreground/70" />;
@@ -210,6 +347,17 @@ export function ItemGrid() {
     </Card>
   );
 
+  if (clientError) {
+    return (
+      <div className="space-y-6 p-6">
+        <Card>
+          <h2 className="text-lg font-bold">Erro no cliente</h2>
+          <pre className="whitespace-pre-wrap mt-2 text-sm">{clientError.stack || String(clientError)}</pre>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-8 pb-4">
@@ -227,16 +375,37 @@ export function ItemGrid() {
                 aria-label="Filter items"
               />
             </div>
-            <Select onValueChange={setSelectedMap} value={selectedMap}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Selecionar mapa" />
-              </SelectTrigger>
-              <SelectContent>
-                {maps.map(map => (
-                  <SelectItem key={map.mapId} value={map.mapId.toString()}>{map.mapName}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full sm:w-[200px] justify-between">
+                  {selectedDistinctNames.length === 0 ? 'Selecionar mapa' : selectedDistinctNames.length === 1 ? selectedDistinctNames[0] : `${selectedDistinctNames.length} selecionados`}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[260px]">
+                <div className="space-y-2 max-h-64 overflow-auto">
+                  <label className="flex items-center gap-2">
+                    <Checkbox checked={allMapsSelected} onCheckedChange={(c) => toggleAllMaps(c)} />
+                    <span className="text-sm font-medium">Selecionar todos</span>
+                  </label>
+                  <div className="border-t" />
+                  {distinctMapNames.map((name) => {
+                    const ids = groupedMapsByName.get(name) || [];
+                    const allSelected = ids.every((id) => selectedMaps.includes(String(id)));
+                    const someSelected = ids.some((id) => selectedMaps.includes(String(id)));
+                    const checkedProp: boolean | "mixed" = allSelected ? true : someSelected ? "mixed" : false;
+                    return (
+                      <label key={name} className="flex items-center gap-2">
+                        <Checkbox
+                          checked={checkedProp}
+                          onCheckedChange={(c) => toggleMapNameSelection(name, c)}
+                        />
+                        <span className="text-sm">{name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
             <Select onValueChange={handleAttributeSortChange} value={selectedAttribute || 'default'}>
               <SelectTrigger className="w-full sm:w-[220px]">
                 <SelectValue placeholder="Ordenar por atributo" />
@@ -268,6 +437,7 @@ export function ItemGrid() {
                     Descrição {renderSortArrow('plaintext')}
                   </Button>
                 </TableHead>
+                <TableHead>Mapas</TableHead>
                 <TableHead className="w-28 text-right">
                   <Button variant="ghost" onClick={() => requestSort('gold')} className="px-2">
                     Valor {renderSortArrow('gold')}
@@ -291,10 +461,34 @@ export function ItemGrid() {
                       </div>
                     </TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell
-                      className="text-muted-foreground text-sm max-w-md"
-                      dangerouslySetInnerHTML={{ __html: item.description }}
-                    />
+                    <TableCell className="text-muted-foreground text-sm max-w-md">
+                      {
+                        (() => {
+                          const isHead = headItemNames.has(normalizeText(item.name)) || headItemNames.has(normalizeText(item.plaintext));
+                          let descHtml = (item.description || '');
+                          if (isHead) {
+                            const tagHtml = '<br/><headitem>Cabeça/Chapéu/Máscara</headitem>';
+                            if (descHtml.includes('</mainText>')) {
+                              descHtml = descHtml.replace(/<\/mainText>/i, `${tagHtml}</mainText>`);
+                            } else {
+                              descHtml = descHtml + tagHtml;
+                            }
+                          }
+                          return <div dangerouslySetInnerHTML={{ __html: descHtml }} />;
+                        })()
+                      }
+                    </TableCell>
+                    <TableCell className="w-48">
+                      <div className="flex flex-wrap gap-2">
+                        {getItemMapNames(item).length > 0 ? (
+                          getItemMapNames(item).map((name) => (
+                            <Badge key={name} variant="outline">{name}</Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right font-mono text-accent">
                       {item.gold.total}
                     </TableCell>
@@ -302,7 +496,7 @@ export function ItemGrid() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center">
+                  <TableCell colSpan={5} className="h-24 text-center">
                     Nenhum item encontrado.
                   </TableCell>
                 </TableRow>
