@@ -83,6 +83,9 @@ export function ItemGrid() {
     direction: 'ascending',
   });
 
+  // Versão do Data Dragon (usada para buscar itens e imagens)
+  const [ddragonVersion, setDdragonVersion] = React.useState<string>('15.24.1');
+
   // Normaliza texto removendo acentos e caracteres não alfanuméricos
   const normalizeText = (s?: string) => {
     const str = (s ?? '').toString();
@@ -122,8 +125,15 @@ export function ItemGrid() {
     async function fetchData() {
       setLoading(true);
       try {
+        // fetch latest versions to determine which DATA Dragon version to use
+        const versionsResp = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
+        if (!versionsResp.ok) throw new Error('Failed to fetch versions');
+        const versions: string[] = await versionsResp.json();
+        const latest = versions && versions.length ? versions[0] : ddragonVersion;
+        setDdragonVersion(latest);
+
         const [itemResponse, mapsResponse] = await Promise.all([
-          fetch('https://ddragon.leagueoflegends.com/cdn/15.14.1/data/pt_BR/item.json'),
+          fetch(`https://ddragon.leagueoflegends.com/cdn/${latest}/data/pt_BR/item.json`),
           fetch('https://static.developer.riotgames.com/docs/lol/maps.json')
         ]);
 
@@ -362,7 +372,10 @@ export function ItemGrid() {
     <div className="space-y-6">
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-8 pb-4">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h1 className="text-3xl font-bold text-foreground">LoL Item Explorer</h1>
+          <div className="flex items-baseline gap-3">
+            <h1 className="text-3xl font-bold text-foreground">LoL Item Explorer</h1>
+            <span className="text-sm text-muted-foreground">Versão: {ddragonVersion}</span>
+          </div>
           <div className="flex w-full flex-col sm:flex-row sm:w-auto sm:items-center gap-2">
             <div className="relative w-full sm:w-60">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
@@ -452,7 +465,7 @@ export function ItemGrid() {
                     <TableCell className="p-2">
                       <div className="flex items-center justify-center">
                         <Image
-                          src={`https://ddragon.leagueoflegends.com/cdn/15.14.1/img/item/${item.image.full}`}
+                          src={`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/item/${item.image.full}`}
                           alt={item.name}
                           width={48}
                           height={48}
