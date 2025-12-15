@@ -8,6 +8,7 @@ body {
 
 @layer base {
   :root {
+    --gold: #d4af37;
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
@@ -44,6 +45,7 @@ body {
   }
 
   .dark {
+    --gold: #d4af37;
     --background: 0 0% 13%;
     --foreground: 0 0% 98%;
     --card: 0 0% 13%;
@@ -107,6 +109,41 @@ body {
     color: white;
     font-size: 0.75rem;
     padding: 0.125rem 0.5rem;
+    border-radius: 0.375rem;
+  }
+
+  /* Custom scrollbars for overflow-auto containers */
+  .overflow-auto {
+    scrollbar-width: thin;
+    scrollbar-color: var(--gold) transparent;
+  }
+
+  .overflow-auto::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+  }
+
+  .overflow-auto::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .overflow-auto::-webkit-scrollbar-thumb {
+    background-color: var(--gold);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    transition: background-color 0.12s ease;
+  }
+
+  .overflow-auto::-webkit-scrollbar-thumb:hover {
+    background-color: #ffd36b;
+  }
+
+  /* Native checkbox tweaks to improve visibility */
+  input[type="checkbox"] {
+    accent-color: var(--gold);
+    width: 1.1rem;
+    height: 1.1rem;
     border-radius: 0.375rem;
   }
 }
