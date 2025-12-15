@@ -21,6 +21,7 @@ import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from './ui/skeleton';
+import { AggregatesDisplay } from './aggregates-display';
 
 type SortKey = 'name' | 'plaintext' | 'gold' | 'attribute';
 type SortDirection = 'ascending' | 'descending';
@@ -85,6 +86,26 @@ export function ItemGrid() {
 
   // Versão do Data Dragon (usada para buscar itens e imagens)
   const [ddragonVersion, setDdragonVersion] = React.useState<string>('15.24.1');
+
+  // Seleção de itens do inventário (até 6)
+  const [selectedItemIds, setSelectedItemIds] = React.useState<string[]>([]);
+  const [selectionEnabled, setSelectionEnabled] = React.useState<boolean>(false);
+
+  const toggleSelectItem = (itemId: string) => {
+    if (!selectionEnabled) return; // ignore when selection disabled
+    setSelectedItemIds((prev) => {
+      if (prev.includes(itemId)) return prev.filter((id) => id !== itemId);
+      if (prev.length >= 6) return prev; // silenciosamente limitar a 6
+      return [...prev, itemId];
+    });
+  };
+  const clearSelection = () => setSelectedItemIds([]);
+
+  const toggleSelectionEnabled = (checked?: boolean | 'mixed') => {
+    const enabled = checked === undefined ? !selectionEnabled : !!checked;
+    setSelectionEnabled(enabled);
+    if (!enabled) clearSelection();
+  };
 
   // Normaliza texto removendo acentos e caracteres não alfanuméricos
   const normalizeText = (s?: string) => {
@@ -321,6 +342,137 @@ export function ItemGrid() {
     else setSelectedMaps([]);
   }
 
+  const headerRef = React.useRef<HTMLElement | null>(null);
+  const [availableHeight, setAvailableHeight] = React.useState<number>(0);
+
+  // Selected panel resizing
+  const [selectedPanelWidth, setSelectedPanelWidth] = React.useState<number>(243); // default: 75% of previous ~324px
+  const isDraggingRef = React.useRef(false);
+  const draggingModeRef = React.useRef<'main' | 'inner' | null>(null);
+  const startXRef = React.useRef(0);
+  const startWidthRef = React.useRef(0);
+  const asideRef = React.useRef<HTMLDivElement | null>(null);
+  const [isLargeScreen, setIsLargeScreen] = React.useState<boolean>(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
+
+  React.useEffect(() => {
+    function updateAvailable() {
+      const headerH = headerRef.current?.getBoundingClientRect().height ?? 0;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+      const extra = 48; // padding/margins allowance
+      const computed = Math.max(220, vh - headerH - extra);
+      setAvailableHeight(computed);
+    }
+
+    updateAvailable();
+    function handleResize() {
+      updateAvailable();
+      setIsLargeScreen(window.innerWidth >= 1024);
+    }
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  React.useEffect(() => {
+    // cleanup in case of unmount while dragging
+    return () => {
+      isDraggingRef.current = false;
+      window.removeEventListener('mousemove', onMouseMove as any);
+      window.removeEventListener('mouseup', onMouseUp as any);
+      window.removeEventListener('touchmove', onTouchMove as any);
+      window.removeEventListener('touchend', onTouchEnd as any);
+    };
+  }, []);
+
+  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    const dx = e.clientX - startXRef.current;
+    if (draggingModeRef.current === 'main') {
+      // dragging main splitter: positive dx should decrease aside width (so main grid grows)
+      const newAside = clamp(startAsideWidthRef.current - dx, asideMin, asideMax);
+      setAsideWidth(newAside);
+    } else {
+      // inner splitter (between selected and totals): positive dx increases selected width
+      const maxSelected = asideWidth - totalsMin - splitterThickness;
+      const newWidth = clamp(startWidthRef.current + dx, 180, maxSelected);
+      setSelectedPanelWidth(newWidth);
+    }
+  };
+
+  const onMouseUp = () => {
+    isDraggingRef.current = false;
+    draggingModeRef.current = null;
+    window.removeEventListener('mousemove', onMouseMove as any);
+    window.removeEventListener('mouseup', onMouseUp as any);
+  };
+
+  const onTouchMove = (e: TouchEvent) => {
+    if (!isDraggingRef.current) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startXRef.current;
+    if (draggingModeRef.current === 'main') {
+      const newAside = clamp(startAsideWidthRef.current - dx, asideMin, asideMax);
+      setAsideWidth(newAside);
+    } else {
+      const maxSelected = asideWidth - totalsMin - splitterThickness;
+      const newWidth = clamp(startWidthRef.current + dx, 180, maxSelected);
+      setSelectedPanelWidth(newWidth);
+    }
+  };
+
+  const onTouchEnd = () => {
+    isDraggingRef.current = false;
+    window.removeEventListener('touchmove', onTouchMove as any);
+    window.removeEventListener('touchend', onTouchEnd as any);
+  };
+
+  const onSplitterMouseDown = (e: React.MouseEvent) => {
+    draggingModeRef.current = 'inner';
+    isDraggingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = selectedPanelWidth;
+    window.addEventListener('mousemove', onMouseMove as any);
+    window.addEventListener('mouseup', onMouseUp as any);
+  };
+
+  const onSplitterTouchStart = (e: React.TouchEvent) => {
+    draggingModeRef.current = 'inner';
+    isDraggingRef.current = true;
+    const touch = e.touches[0];
+    startXRef.current = touch.clientX;
+    startWidthRef.current = selectedPanelWidth;
+    window.addEventListener('touchmove', onTouchMove as any, { passive: false } as any);
+    window.addEventListener('touchend', onTouchEnd as any);
+  };
+
+  const onMainSplitterMouseDown = (e: React.MouseEvent) => {
+    draggingModeRef.current = 'main';
+    isDraggingRef.current = true;
+    startXRef.current = e.clientX;
+    startAsideWidthRef.current = asideWidth;
+    window.addEventListener('mousemove', onMouseMove as any);
+    window.addEventListener('mouseup', onMouseUp as any);
+  };
+
+  const onMainSplitterTouchStart = (e: React.TouchEvent) => {
+    draggingModeRef.current = 'main';
+    isDraggingRef.current = true;
+    const touch = e.touches[0];
+    startXRef.current = touch.clientX;
+    startAsideWidthRef.current = asideWidth;
+    window.addEventListener('touchmove', onTouchMove as any, { passive: false } as any);
+    window.addEventListener('touchend', onTouchEnd as any);
+  };
+
+  const totalsCardWidth = 288; // matches lg:w-72 (18rem -> 288px)
+  const splitterThickness = 8; // hit area for main splitter
+  const [asideWidth, setAsideWidth] = React.useState<number>(720); // total width reserved for aside on large screens
+  const startAsideWidthRef = React.useRef<number>(asideWidth);
+  const asideMin = 360;
+  const asideMax = 1200;
+  const totalsMin = 140;
+
   const renderSortArrow = (key: SortKey) => {
     if (!sortConfig || sortConfig.key !== key) {
       return <ChevronsUpDown className="ml-2 h-4 w-4 text-muted-foreground/70" />;
@@ -334,26 +486,28 @@ export function ItemGrid() {
 
   const GridSkeleton = () => (
     <Card>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-20">Ícone</TableHead>
-            <TableHead className="w-1/4">Nome</TableHead>
-            <TableHead>Descrição</TableHead>
-            <TableHead className="w-28 text-right">Valor</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {Array.from({ length: 10 }).map((_, index) => (
-            <TableRow key={index}>
-              <TableCell className="p-2"><Skeleton className="h-12 w-12 rounded-md" /></TableCell>
-              <TableCell><Skeleton className="h-6 w-3/4" /></TableCell>
-              <TableCell><Skeleton className="h-6 w-full" /></TableCell>
-              <TableCell><Skeleton className="h-6 w-1/2 ml-auto" /></TableCell>
+      <div className="max-h-[60vh] overflow-auto" style={availableHeight ? { maxHeight: `${availableHeight}px` } : {}}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-20">Ícone</TableHead>
+              <TableHead className="w-1/4">Nome</TableHead>
+              <TableHead>Descrição</TableHead>
+              <TableHead className="w-28 text-right">Valor</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {Array.from({ length: 10 }).map((_, index) => (
+              <TableRow key={index}>
+                <TableCell className="p-2"><Skeleton className="h-10 w-10 rounded-md" /></TableCell>
+                <TableCell><Skeleton className="h-6 w-3/4" /></TableCell>
+                <TableCell><Skeleton className="h-6 w-full" /></TableCell>
+                <TableCell><Skeleton className="h-6 w-1/2 ml-auto" /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </Card>
   );
 
@@ -368,156 +522,263 @@ export function ItemGrid() {
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <header className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-8 pb-4">
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-3xl font-bold text-foreground">LoL Item Explorer</h1>
-            <span className="text-sm text-muted-foreground">Versão: {ddragonVersion}</span>
-          </div>
-          <div className="flex w-full flex-col sm:flex-row sm:w-auto sm:items-center gap-2">
-            <div className="relative w-full sm:w-60">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Filtrar por nome ou descrição..."
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="pl-10 text-base"
-                aria-label="Filter items"
-              />
+  try {
+    return (
+      <div className="space-y-6">
+        <header ref={headerRef} className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-8 pb-4">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-3xl font-bold text-foreground">LoL Item Explorer</h1>
+              <span className="text-sm text-muted-foreground">Versão: {ddragonVersion}</span>
             </div>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-[200px] justify-between">
-                  {selectedDistinctNames.length === 0 ? 'Selecionar mapa' : selectedDistinctNames.length === 1 ? selectedDistinctNames[0] : `${selectedDistinctNames.length} selecionados`}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[260px]">
-                <div className="space-y-2 max-h-64 overflow-auto">
-                  <label className="flex items-center gap-2">
-                    <Checkbox checked={allMapsSelected} onCheckedChange={(c) => toggleAllMaps(c)} />
-                    <span className="text-sm font-medium">Selecionar todos</span>
-                  </label>
-                  <div className="border-t" />
-                  {distinctMapNames.map((name) => {
-                    const ids = groupedMapsByName.get(name) || [];
-                    const allSelected = ids.every((id) => selectedMaps.includes(String(id)));
-                    const someSelected = ids.some((id) => selectedMaps.includes(String(id)));
-                    const checkedProp: boolean | "mixed" = allSelected ? true : someSelected ? "mixed" : false;
-                    return (
-                      <label key={name} className="flex items-center gap-2">
-                        <Checkbox
-                          checked={checkedProp}
-                          onCheckedChange={(c) => toggleMapNameSelection(name, c)}
-                        />
-                        <span className="text-sm">{name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </PopoverContent>
-            </Popover>
-            <Select onValueChange={handleAttributeSortChange} value={selectedAttribute || 'default'}>
-              <SelectTrigger className="w-full sm:w-[220px]">
-                <SelectValue placeholder="Ordenar por atributo" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">Padrão</SelectItem>
-                {uniqueAttributes.map(attr => (
-                  <SelectItem key={attr} value={attr}>{attr}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </header>
+            <div className="flex w-full flex-col sm:flex-row sm:w-auto sm:items-center gap-2">
+              <div className="relative w-full sm:w-60">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Filtrar por nome ou descrição..."
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="pl-10 text-base"
+                  aria-label="Filter items"
+                />
+              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full sm:w-[200px] justify-between">
+                    {selectedDistinctNames.length === 0 ? 'Selecionar mapa' : selectedDistinctNames.length === 1 ? selectedDistinctNames[0] : `${selectedDistinctNames.length} selecionados`}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[260px]">
+                  <div className="space-y-2 max-h-64 overflow-auto">
+                    <label className="flex items-center gap-2">
+                      <Checkbox checked={allMapsSelected} onCheckedChange={(c) => toggleAllMaps(c)} />
+                      <span className="text-sm font-medium">Selecionar todos</span>
+                    </label>
+                    <div className="border-t" />
+                    {distinctMapNames.map((name) => {
+                      const ids = groupedMapsByName.get(name) || [];
+                      const allSelected = ids.every((id) => selectedMaps.includes(String(id)));
+                      const someSelected = ids.some((id) => selectedMaps.includes(String(id)));
+                      const checkedProp: boolean | "mixed" = allSelected ? true : someSelected ? "mixed" : false;
+                      return (
+                        <label key={name} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={checkedProp}
+                            onCheckedChange={(c) => toggleMapNameSelection(name, c)}
+                          />
+                          <span className="text-sm">{name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <Select onValueChange={handleAttributeSortChange} value={selectedAttribute || 'default'}>
+                <SelectTrigger className="w-full sm:w-[220px]">
+                  <SelectValue placeholder="Ordenar por atributo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Padrão</SelectItem>
+                  {uniqueAttributes.map(attr => (
+                    <SelectItem key={attr} value={attr}>{attr}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-      {loading ? <GridSkeleton /> : (
+              <div className="hidden sm:flex items-center gap-2">
+                <label className="flex items-center gap-2">
+                  <Checkbox checked={selectionEnabled} onCheckedChange={(c) => toggleSelectionEnabled(c)} />
+                  <span className="text-sm">Ativar seleção</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex flex-col lg:flex-row gap-4 items-stretch" style={availableHeight ? { height: `${availableHeight}px` } : {}}>
+          <div className="flex-1">
+            {loading ? <GridSkeleton /> : (
+              <Card className="h-full">
+                <div className="overflow-auto h-full">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-20">Ícone</TableHead>
+                        <TableHead className="w-1/4">Nome</TableHead>
+                        <TableHead>Descrição</TableHead>
+                        <TableHead>Mapas</TableHead>
+                        <TableHead className="w-28 text-right">Valor</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredAndSortedItems.length > 0 ? (
+                        filteredAndSortedItems.map(item => (
+                          <TableRow key={item.id} className={`transition-opacity duration-200 ${(selectionEnabled && selectedItemIds.includes(item.id)) ? 'bg-secondary/40' : ''}`}>
+                            <TableCell className="p-2">
+                              <div className="flex items-center gap-2">
+                                {selectionEnabled ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedItemIds.includes(item.id)}
+                                    onChange={() => toggleSelectItem(item.id)}
+                                    aria-label={`Selecionar ${item.name}`}
+                                  />
+                                ) : null}
+                                <div className="flex items-center justify-center">
+                                  <Image
+                                    src={`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/item/${item.image?.full}`}
+                                    alt={item.name}
+                                    width={40}
+                                    height={40}
+                                    className="rounded-md"
+                                  />
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-medium">{item.name}</TableCell>
+                            <TableCell className="text-muted-foreground text-sm max-w-md">
+                              {
+                                (() => {
+                                  const isHead = headItemNames.has(normalizeText(item.name)) || headItemNames.has(normalizeText(item.plaintext));
+                                  let descHtml = (item.description || '');
+                                  if (isHead) {
+                                    const tagHtml = '<br/><headitem>Cabeça/Chapéu/Máscara</headitem>';
+                                    if (descHtml.includes('</mainText>')) {
+                                      descHtml = descHtml.replace(/<\/mainText>/i, `${tagHtml}</mainText>`);
+                                    } else {
+                                      descHtml = descHtml + tagHtml;
+                                    }
+                                  }
+                                  return <div dangerouslySetInnerHTML={{ __html: descHtml }} />;
+                                })()
+                              }
+                            </TableCell>
+                            <TableCell className="w-48">
+                              <div className="flex flex-wrap gap-2">
+                                {getItemMapNames(item).length > 0 ? (
+                                  getItemMapNames(item).map((name) => (
+                                    <Badge key={name} variant="outline">{name}</Badge>
+                                  ))
+                                ) : (
+                                  <span className="text-sm text-muted-foreground">—</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-accent">{item.gold.total}</TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={5}>Nenhum item encontrado.</TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            )}
+          </div>
+          {selectionEnabled && isLargeScreen && (
+            // Splitter between main grid and aside (desktop)
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Redimensionar painel principal"
+              onMouseDown={onMainSplitterMouseDown}
+              onTouchStart={onMainSplitterTouchStart}
+              className="hidden lg:flex items-stretch cursor-col-resize select-none"
+              style={{ width: `${splitterThickness}px` }}
+            >
+              <div className="w-0.5 h-full bg-transparent hover:bg-slate-200/60 mx-auto" />
+            </div>
+          )}
+
+          {selectionEnabled && (
+            <aside ref={asideRef} className="w-full flex-shrink-0" style={isLargeScreen ? { width: `${asideWidth}px` } : undefined}>
+              <div className="flex flex-col lg:flex-row gap-3 h-full">
+                <Card className="w-full lg:flex-none h-full min-w-[180px]" style={isLargeScreen ? { width: `${selectedPanelWidth}px` } : undefined}>
+                  <div className="flex flex-col gap-3 p-3 overflow-auto h-full">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm">Selecionados: {selectedItemIds.length} / 6</div>
+                      <Button variant="ghost" onClick={clearSelection}>Limpar</Button>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {selectedItemIds.length > 0 ? (
+                        selectedItemIds.map(id => {
+                          const it = items.find(i => i.id === id);
+                          if (!it) return null;
+                          return (
+                            <div key={id} className="border rounded p-3">
+                              <div className="flex items-center gap-3">
+                                <Image
+                                  src={`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/item/${it.image.full}`}
+                                  alt={it.name}
+                                  width={36}
+                                  height={36}
+                                  className="rounded-md"
+                                />
+                                <div>
+                                  <div className="font-medium">{it.name}</div>
+                                  <div className="text-xs text-muted-foreground">Valor: {it.gold.total}</div>
+                                </div>
+                              </div>
+
+                              <div className="mt-2 text-sm text-muted-foreground">
+                                {it.attributes && it.attributes.length ? (
+                                  <ul className="list-disc pl-5">
+                                    {it.attributes.map(attr => (
+                                      <li key={attr.descricao}>{attr.descricao}: {attr.valor}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div className="text-xs text-muted-foreground">Sem atributos.</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-4 text-sm text-muted-foreground">Nenhum item selecionado.</div>
+                      )}
+
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Splitter (desktop only) */}
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Redimensionar painel de seleção"
+                  onMouseDown={onSplitterMouseDown}
+                  onTouchStart={onSplitterTouchStart}
+                  className="hidden lg:flex items-stretch cursor-col-resize select-none"
+                >
+                  <div className="w-2 h-full bg-transparent hover:bg-slate-200/60 transition-colors" />
+                </div>
+
+                <Card className="h-full" style={isLargeScreen ? { width: `${Math.max(totalsMin, asideWidth - selectedPanelWidth - splitterThickness)}px` } : undefined}>
+                  <div className="p-4 overflow-auto h-full">
+                    <AggregatesDisplay items={items} selectedItemIds={selectedItemIds} />
+                  </div>
+                </Card>
+              </div>
+            </aside>
+          )}
+        </div>
+      </div>
+    );
+  } catch (err: any) {
+    console.error('ItemGrid render error', err);
+    return (
+      <div className="space-y-6 p-6">
         <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-20">Ícone</TableHead>
-                <TableHead className="w-1/4">
-                  <Button variant="ghost" onClick={() => requestSort('name')} className="px-2">
-                    Nome {renderSortArrow('name')}
-                  </Button>
-                </TableHead>
-                <TableHead>
-                  <Button variant="ghost" onClick={() => requestSort('plaintext')} className="px-2">
-                    Descrição {renderSortArrow('plaintext')}
-                  </Button>
-                </TableHead>
-                <TableHead>Mapas</TableHead>
-                <TableHead className="w-28 text-right">
-                  <Button variant="ghost" onClick={() => requestSort('gold')} className="px-2">
-                    Valor {renderSortArrow('gold')}
-                  </Button>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredAndSortedItems.length > 0 ? (
-                filteredAndSortedItems.map((item) => (
-                  <TableRow key={item.id} className="transition-opacity duration-300 ease-in-out">
-                    <TableCell className="p-2">
-                      <div className="flex items-center justify-center">
-                        <Image
-                          src={`https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/item/${item.image.full}`}
-                          alt={item.name}
-                          width={48}
-                          height={48}
-                          className="rounded-md transition-transform duration-200 hover:scale-110"
-                        />
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm max-w-md">
-                      {
-                        (() => {
-                          const isHead = headItemNames.has(normalizeText(item.name)) || headItemNames.has(normalizeText(item.plaintext));
-                          let descHtml = (item.description || '');
-                          if (isHead) {
-                            const tagHtml = '<br/><headitem>Cabeça/Chapéu/Máscara</headitem>';
-                            if (descHtml.includes('</mainText>')) {
-                              descHtml = descHtml.replace(/<\/mainText>/i, `${tagHtml}</mainText>`);
-                            } else {
-                              descHtml = descHtml + tagHtml;
-                            }
-                          }
-                          return <div dangerouslySetInnerHTML={{ __html: descHtml }} />;
-                        })()
-                      }
-                    </TableCell>
-                    <TableCell className="w-48">
-                      <div className="flex flex-wrap gap-2">
-                        {getItemMapNames(item).length > 0 ? (
-                          getItemMapNames(item).map((name) => (
-                            <Badge key={name} variant="outline">{name}</Badge>
-                          ))
-                        ) : (
-                          <span className="text-sm text-muted-foreground">—</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-accent">
-                      {item.gold.total}
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center">
-                    Nenhum item encontrado.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+          <h2 className="text-lg font-bold">Erro ao renderizar ItemGrid</h2>
+          <pre className="whitespace-pre-wrap mt-2 text-sm">{String(err && (err.stack || err.message || err))}</pre>
         </Card>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
 }
