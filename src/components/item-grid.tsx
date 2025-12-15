@@ -36,19 +36,24 @@ function parseAttributes(html: string): ItemAttribute[] {
   const attributes: ItemAttribute[] = [];
   const parts = statsText.split('<br>').filter((part: string) => part.trim() !== '');
 
+  addAttributes(parts, 'attention', attributes);
+  addAttributes(parts, 'ornnBonus', attributes);
+
+  return attributes;
+}
+
+function addAttributes(parts: string[], attribute: string, attributes: ItemAttribute[]) {
   parts.forEach((part: string) => {
     const part$ = cheerio.load(part);
-    const valueText = part$('attention').text().trim();
+    const valueText = part$(attribute).text().trim();
     const value = parseInt(valueText, 10);
 
     if (!isNaN(value)) {
-      part$('attention').remove();
+      part$(attribute).remove();
       const description = part$.root().text().trim().replace(/^de\s/, '');
       attributes.push({ valor: value, descricao: description });
     }
   });
-
-  return attributes;
 }
 
 export function ItemGrid() {

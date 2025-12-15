@@ -92,24 +92,45 @@ body {
 }
 
 @layer components {
-  attention {
+
+  attention,
+  ornnBonus,
+  keyword,
+  raritylegendary {
     color: hsl(var(--accent));
   }
 
   passive {
     color: #4ade80;
-    /* Cor verde para passive */
+  }
+
+  active {
+    color: #4aded7;
   }
 
   headitem {
     display: inline-block;
-    margin-left: 0.5rem;
+    margin-top: 0.5rem;
     background: #f59e0b;
-    /* amber-500 */
     color: white;
     font-size: 0.75rem;
-    padding: 0.125rem 0.5rem;
+    padding: 0 1rem;
     border-radius: 0.375rem;
+  }
+
+  gold,
+  attackSpeed,
+  magicDamage,
+  physicaldamage,
+  OnHit,
+  scalead,
+  scaleap,
+  scalehealth,
+  scalemana,
+  healing,
+  speed,
+  shield {
+    color: #c2cf4f;
   }
 
   /* Custom scrollbars for overflow-auto containers */
